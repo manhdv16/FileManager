@@ -185,11 +185,8 @@ public class ClientSocketThread extends Thread {
                     fileToSend(pathFile);
 //                });
             }
-            executor.shutdown();
-            
-            if (sendFileSuccess == true) {
-                sendMessage("END_ALL_FILE");
-            }
+//            executor.shutdown();
+            sendMessage("END_ALL_FILE");
         }
         sendType = SEND_TYPE.DO_NOT_SEND;
     }
@@ -263,59 +260,41 @@ public class ClientSocketThread extends Thread {
                 }
             }
             else {
-                
-                InputStream fin = new FileInputStream(source);
-                sendMessage("SEND_FILE" + "--" + source.getName());
-                long chuckSize = lenghtOfFile/5;
-                CountDownLatch latch = new CountDownLatch(5);
-                for(int i =0;i<5;i++) {
-                    long start = i*chuckSize;
-                    long end = (i == 4) ? lenghtOfFile-1 : start+chuckSize-1;
-                    int index = i;
-                    try {
-                        sendFileChuck(source, start, end, index);
-                    } finally {
-                        latch.countDown(); // Giảm số lần đếm sau mỗi lần luồng hoàn thành
+                try(InputStream fin= new FileInputStream(source)){
+                    sendMessage("SEND_FILE" + "--" + source.getName());
+                    int totalParts = 5;        
+                    long chuckSize = lengthFile/totalParts;
+                    int bufferSize = (int) chuckSize;
+                    CountDownLatch latch = new CountDownLatch(totalParts);
+                    for(int i =0;i<totalParts;i++) {
+                        long start = i*chuckSize;
+                        long end = (i == totalParts)?(lengthFile-1):start+chuckSize-1;
+                        int index = i;
+                        try {
+                            sendFileChuck(source, start, end, index,bufferSize);
+                        } finally {
+                            latch.countDown(); // Giảm số lần đếm sau mỗi lần luồng hoàn thành
+                        }
                     }
-                }
-                try {
-                    latch.await(); // Chờ cho tới khi latch đếm về 0
-                    sendMessage("END_FILE");
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                if (sendFileSuccess == true) {
-//                    while ((len = fin.read(buf)) != -1) {
-//                        total += len;
-//                        DataFile dtf = new DataFile();
-//                        byte[] buf1 = Arrays.copyOf(buf, len);
-//                        dtf.data = EncryptionUtil.encrypt(buf1);
-//                        sendMessage(dtf);
-//                        iSocketListener.setProgress((int) (total * 100 / lenghtOfFile));
-//                    }
-                    fin.close();
-//                    if (total >= lenghtOfFile) {
-//                        progressResetTimer.start();
-//                        try {
-//                            Thread.sleep(1000);
-//                        } catch (InterruptedException e) {
-//                            // TODO Auto-generated catch block
-//                            e.printStackTrace();
-//                        }
-//                    }
-//                    sendMessage("END_FILE");
+                    try {
+                        latch.await(); // Chờ cho tới khi latch đếm về 0
+                        sendMessage("END_FILE");
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                } catch(Exception e){
+                    e.printStackTrace();
                 }
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
-    public void sendFileChuck(File source,long start,long end,int index) {
+    public void sendFileChuck(File source,long start,long end,int index, int bufferSize) {
        
         try (InputStream inputStream = new FileInputStream(source)) {
             inputStream.skip(start);
 
-            int bufferSize = 1024;
             byte[] buffer = new byte[bufferSize];
             int bytesRead;
 
@@ -326,9 +305,11 @@ public class ClientSocketThread extends Thread {
                 sendMessage(dataFile);
                 start += bytesRead;
                 totals+= bytesRead;
-                iSocketListener.setProgress((int) (totals * 100 / lengthFile));
+                System.out.println("totals: " +totals);
+                System.out.println("leng:" +lengthFile);
+                iSocketListener.setProgress((int) (totals * 100 / (lengthFile-1)));
             }
-            if (totals >= lengthFile) {
+            if (totals >= (lengthFile-1)) {
                 progressResetTimer.start();
                 try {
                     Thread.sleep(1000);

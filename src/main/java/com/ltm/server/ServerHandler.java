@@ -19,6 +19,7 @@ import java.awt.event.ActionListener;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -131,6 +132,7 @@ public class ServerHandler extends Thread {
             } else {
                 this.sendString("ERROR--Folder đã tồn tại trên server");
             }
+            dataMap = new HashMap<>();
             m_dtf.clear();
         } else if (str.contains("END_FILE_IN_FOLDER")) {
             if (!fileNameReceived.endsWith("\\")) {
@@ -152,10 +154,9 @@ public class ServerHandler extends Thread {
                 this.sendString("ERROR--File đã tồn tại trên server");
             }
         } else if (str.contains("END_FILE")) {
-            System.out.println("truoc khi append data");
             m_dtf.appendDataMap(dataMap);
-            System.out.println("da append data");
             m_dtf.saveFile(FileWorker.URL_FOLDER + "\\" + fileNameReceived);
+            dataMap.clear();
 
         } else if (str.contains("END_ALL_FILE")) {
             this.sendString("UPLOAD_SUCCESSFULLY");
