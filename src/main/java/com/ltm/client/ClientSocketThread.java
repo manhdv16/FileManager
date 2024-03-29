@@ -43,8 +43,6 @@ public class ClientSocketThread extends Thread {
 
     DataFile m_dtf;
 
-    ExecutorService executor = Executors.newFixedThreadPool(5);
-
     public ClientSocketThread(ISocketListener iSocketListener) throws Exception {
         this.iSocketListener = iSocketListener;
         m_dtf = new DataFile();
@@ -182,7 +180,7 @@ public class ClientSocketThread extends Thread {
             for (String pathFile : listFileNames) {
                 int index = ++i;
 //                executor.submit(() -> {
-                    fileToSend(pathFile);
+                fileToSend(pathFile);
 //                });
             }
 //            executor.shutdown();
@@ -203,52 +201,48 @@ public class ClientSocketThread extends Thread {
         System.out.println("filename:" + listFilePaths);
         this.listFileNames = listFilePaths;
     }
-    
+
     public static long totals = 0;
-    public static long lengthFile=0;
-    
+    public static long lengthFile = 0;
+
     private void fileToSend(String pathFile) {
         sendFileSuccess = true;
-        long lenghtOfFile;
-        byte[] buf = new byte[1024];
-        long total = 0;
-        int len;
         File source;
         if (pathFile.contains(".zip--")) {
             String[] fileInfor = pathFile.split("--");
             pathFile = fileInfor[0];
-            lenghtOfFile = Integer.parseInt(fileInfor[1]);
+            lengthFile = Integer.parseInt(fileInfor[1]);
             source = new File(pathFile);
         } else {
             source = new File(pathFile);
-            lenghtOfFile = source.length();
-            lengthFile = lenghtOfFile;
+            lengthFile = source.length();
         }
-
         try {
             if (pathFile.contains(".zip")) {
                 sendMessage("SEND_FOLDER" + "--" + source.getName());
-                if (sendFileSuccess == true) {
+                ExecutorService excutor = Executors.newFixedThreadPool(5);
+
+                if (sendFileSuccess) {
                     ZipInputStream zis = new ZipInputStream(new FileInputStream(source));
                     ZipEntry zipEntry;
                     while ((zipEntry = zis.getNextEntry()) != null) {
                         // Lấy tên tệp tin trong ZIP
+                        ZipEntry zEntry = zipEntry;
                         String entryName = zipEntry.getName();
                         sendMessage("SEND_FILE" + "--" + entryName);
-                        // Đọc dữ liệu từ zipEntry và gửi lên máy chủ
-                        while ((len = zis.read(buf)) != -1) {
-                            total += len;
-                            DataFile dtf = new DataFile();
-                            byte[] buf1 = Arrays.copyOf(buf, len);
-                            dtf.data = EncryptionUtil.encrypt(buf1);
-                            sendMessage(dtf);
-                            iSocketListener.setProgress((int) (total * 100 / lenghtOfFile));
-                        }
+                        excutor.execute(() -> {
+                            try {
+                                sendFileInZip(zis, zEntry);
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }
+                        });
                         zis.closeEntry();// đóng entry hiện tại
                         sendMessage("END_FILE_IN_FOLDER");
+                        excutor.shutdown();
                     }
                     sendMessage("END_FOLDER");
-                    if (total >= lenghtOfFile) {
+                    if (totals >= lengthFile) {
                         progressResetTimer.start();
                         try {
                             Thread.sleep(1000);
@@ -258,23 +252,25 @@ public class ClientSocketThread extends Thread {
                         }
                     }
                 }
-            }
-            else {
-                try(InputStream fin= new FileInputStream(source)){
+            } else {
+                try (InputStream fin = new FileInputStream(source)) {
                     sendMessage("SEND_FILE" + "--" + source.getName());
-                    int totalParts = 5;        
-                    long chuckSize = lengthFile/totalParts;
+                    int totalParts = 5;
+                    long chuckSize = lengthFile / totalParts;
                     int bufferSize = (int) chuckSize;
+                    ExecutorService executor = Executors.newFixedThreadPool(totalParts);
                     CountDownLatch latch = new CountDownLatch(totalParts);
-                    for(int i =0;i<totalParts;i++) {
-                        long start = i*chuckSize;
-                        long end = (i == totalParts)?(lengthFile-1):start+chuckSize-1;
+                    for (int i = 0; i < totalParts; i++) {
+                        long start = i * chuckSize;
+                        long end = (i == totalParts) ? (lengthFile - 1) : start + chuckSize - 1;
                         int index = i;
-                        try {
-                            sendFileChuck(source, start, end, index,bufferSize);
-                        } finally {
-                            latch.countDown(); // Giảm số lần đếm sau mỗi lần luồng hoàn thành
-                        }
+                        executor.submit(() -> {
+                            try {
+                                sendFileChuck(source, start, end, index, bufferSize, latch);
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }
+                        });
                     }
                     try {
                         latch.await(); // Chờ cho tới khi latch đếm về 0
@@ -282,7 +278,7 @@ public class ClientSocketThread extends Thread {
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                     }
-                } catch(Exception e){
+                } catch (Exception e) {
                     e.printStackTrace();
                 }
             }
@@ -290,8 +286,21 @@ public class ClientSocketThread extends Thread {
             e.printStackTrace();
         }
     }
-    public void sendFileChuck(File source,long start,long end,int index, int bufferSize) {
-       
+
+    public void sendFileInZip(ZipInputStream zis, ZipEntry zipEntry) {
+
+//        while ((len = zis.read(buf)) != -1) {
+//            total += len;
+//            DataFile dtf = new DataFile();
+//            byte[] buf1 = Arrays.copyOf(buf, len);
+//            dtf.data = EncryptionUtil.encrypt(buf1);
+//            sendMessage(dtf);
+//            iSocketListener.setProgress((int) (total * 100 / lenghtOfFile));
+//        }
+    }
+
+    public void sendFileChuck(File source, long start, long end, int index, int bufferSize,CountDownLatch latch) {
+
         try (InputStream inputStream = new FileInputStream(source)) {
             inputStream.skip(start);
 
@@ -304,12 +313,12 @@ public class ClientSocketThread extends Thread {
                 dataFile.data = EncryptionUtil.encrypt(Arrays.copyOf(buffer, bytesRead));
                 sendMessage(dataFile);
                 start += bytesRead;
-                totals+= bytesRead;
-                System.out.println("totals: " +totals);
-                System.out.println("leng:" +lengthFile);
-                iSocketListener.setProgress((int) (totals * 100 / (lengthFile-1)));
+                totals += bytesRead;
+                System.out.println("totals: " + totals);
+                System.out.println("leng:" + lengthFile);
+                iSocketListener.setProgress((int) (totals * 100 / (lengthFile - 1)));
             }
-            if (totals >= (lengthFile-1)) {
+            if (totals >= (lengthFile - 1)) {
                 progressResetTimer.start();
                 try {
                     Thread.sleep(1000);
@@ -317,12 +326,15 @@ public class ClientSocketThread extends Thread {
                     // TODO Auto-generated catch block
                     e.printStackTrace();
                 }
-                totals = 0;lengthFile=0;
+                totals = 0;
+                lengthFile = 0;
             }
+            latch.countDown();
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
+
     // void send Message
     public synchronized void sendMessage(Object obj) {
         try {
